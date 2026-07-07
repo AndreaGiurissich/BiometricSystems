@@ -1,6 +1,4 @@
-"""Contrast-mask preprocessing (Moresca/Suozzi/Santini, face-detection paper).
-
-NO facial alignment. Paper defaults are applied VERBATIM -- every parameter is
+"""Paper defaults are applied VERBATIM -- every parameter is
 read from ``configs/default.yaml`` (the ``preprocessing`` block), nothing is
 hardcoded here. The operator sharpens only high-contrast regions (fingerprint
 ridges) through a soft mask, leaving flat/background areas untouched so noise is
