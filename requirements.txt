@@ -1,0 +1,25 @@
+# Python deps for the SOCOFing robustness study.
+# On Kaggle most of these are preinstalled; pip install is a no-op or fast.
+# Kaggle ships recent torch/opencv builds -- avoid hard pins that fight the image.
+
+numpy
+pandas
+pyyaml
+opencv-python>=4.4        # SIFT lives in main OpenCV since 4.4 (patent expired)
+scikit-image              # Gabor filter bank
+scikit-learn              # ROC / AUC helpers
+matplotlib                # CMC / ROC / montage figures
+tqdm
+torch                     # DINOv2 (frozen inference)
+torchvision
+pytest                    # unit tests
+
+# DINOv2 weights are pulled at runtime via torch.hub from facebookresearch/dinov2
+# -> the Kaggle notebook MUST have "Internet" enabled.
+
+# Minutiae model was DROPPED (see docs/minutiae_investigation.md). The NBIS spike
+# (scripts/spike_nbis.py) is retained for reproducibility; it still needs the
+# Pillow WSQ plugin (MINDTCT reads WSQ/ANSI-NIST, not BMP). fingerflow (used by
+# scripts/spike_minutiaenet.py) is installed by that spike on demand, not here.
+wsq                       # registers a .wsq codec in Pillow (BMP -> WSQ; NBIS spike only)
+pillow                    # image I/O for the WSQ conversion
