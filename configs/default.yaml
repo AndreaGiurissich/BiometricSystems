@@ -1,0 +1,175 @@
+# SOCOFing robustness study - default configuration.
+#
+# Every numeric here is the value ACTUALLY used for a run. A snapshot of this
+# file is saved alongside each run's results (run_config.yaml). Do not change
+# committed parameters silently; surface the change and update this file.
+
+project:
+  name: socofing-robustness
+  master_seed: 42
+
+# --------------------------------------------------------------------------
+# Paths. Select the profile with `active_profile`. dataset_root is overridable
+# so a local user can point at their own copy. On Kaggle, the very first sanity
+# cell walks /kaggle/input first and confirms the real structure before relying
+# on the path below (the slug may nest differently, e.g. socofing-dataset/...).
+# --------------------------------------------------------------------------
+paths:
+  active_profile: kaggle          # kaggle | local
+  profiles:
+    kaggle:
+      # ruizgara/socofing mount (verify_dataset.py auto-locates Real/ if this is off)
+      dataset_root: /kaggle/input/datasets/ruizgara/socofing/SOCOFing
+      results_dir:  /kaggle/working/results
+      logs_dir:     /kaggle/working/logs
+      cache_dir:    /kaggle/working/cache
+    local:
+      dataset_root: data/socofing/SOCOFing
+      results_dir:  results
+      logs_dir:     logs
+      cache_dir:    cache
+  real_subdir: Real
+  altered_levels:
+    Easy:   Altered/Altered-Easy
+    Medium: Altered/Altered-Medium
+    Hard:   Altered/Altered-Hard
+
+dataset:
+  image_ext: ".BMP"
+  case_insensitive: true
+  alteration_types: [Obl, CR, Zcut]
+  identity_keys: [subject_id, hand, finger]   # gender is metadata only
+  expected_real_count: 6000                   # warn, do not fail
+  casing_histogram_limit: 100                 # first N altered files, per level
+
+# --------------------------------------------------------------------------
+# Experimental protocol (frozen; do not change).
+# --------------------------------------------------------------------------
+protocol:
+  task: closed_set_identification
+  gallery: real            # all Real images, one template per finger-identity
+  probe: altered           # all Altered images, evaluated per level
+  levels:     [Easy, Medium, Hard]
+  conditions: [baseline, preprocessed]
+
+# --------------------------------------------------------------------------
+# Contrast-mask preprocessing (Moresca/Suozzi/Santini, face-detection paper).
+# NO facial alignment. Paper defaults are kept VERBATIM for the first pass so we
+# can honestly report "the published pipeline applied as-is". Montages are
+# reviewed before the full matrix runs; params change only after explicit sign-off.
+# --------------------------------------------------------------------------
+preprocessing:
+  gaussian_denoise: {ksize: [5, 5],   sigma: 1.0}          # step 1 (mask only)
+  laplacian:        {ksize: 3}                             # step 2
+  mask_blur1:       {ksize: [5, 5],   sigma: 1.5}          # step 3a
+  mask_threshold:   {value: 30, maxval: 255, type: BINARY} # step 3b
+  mask_blur2:       {ksize: [15, 15], sigma: 3.0}          # step 3c (soft mask)
+  unsharp:          {amount: 1.0, ksize: [5, 5], sigma: 1.0} # step 4 (on ORIGINAL)
+  # step 5: final = mask*sharpened + (1 - mask)*original; float32; clip [0,255]; uint8
+  montage:
+    n_real: 20
+    n_per_level: 20
+    seed: 2024
+
+# --------------------------------------------------------------------------
+# Probe subsampling. Stratified by alteration type, seeded, saved to a manifest
+# so every model/condition uses the IDENTICAL set. Smaller per-model sets are
+# nested prefixes of the shared manifest.
+# --------------------------------------------------------------------------
+subsampling:
+  enabled: true
+  n_probes: 2000
+  seed: 1234
+  stratify_by: alteration_type
+  balance: equal                # equal | proportional (equal falls back when a type is short)
+  nested: true
+  per_model_n_probes:           # null => model uses the full probe set (Tier B)
+    sift:  500                 # decision: SIFT on a nested 500-probe subset (report caveat)
+    gabor: null
+    dinov2: null
+
+tiers:
+  A_subsample: [sift, gabor, dinov2]   # fair cross-model (minutiae dropped, see below)
+  B_full:      [gabor, dinov2]         # best estimate (embedding only)
+
+# --------------------------------------------------------------------------
+# Verification (per-model, native score scale; never cross-normalized).
+# --------------------------------------------------------------------------
+verification:
+  n_impostors_per_probe: 100
+  seed: 777
+  impostor_pool: all_other_identities    # any finger != true identity
+  impostor_sampling: per_probe_deterministic
+
+evaluation:
+  ranks_to_report: [1, 5, 10]
+  cmc_full: true
+  far_at_frr: [0.01]
+  frr_at_far: [0.01]
+  report_rank_N: true          # trivially 1.0 in closed set; sanity only
+
+# --------------------------------------------------------------------------
+# Models (all frozen / inference-only; no weight updates anywhere).
+# --------------------------------------------------------------------------
+models:
+  gabor:
+    orientations: 8
+    frequencies: [0.05, 0.10, 0.20, 0.30]   # cycles/px, 4 scales (tunable)
+    grid: [8, 8]
+    response: mean_abs
+    l2_normalize: true
+    # Kernel/envelope params: were derived defaults in src/models/gabor.py;
+    # pinned here 2026-06-27 so the config stays the single source of truth.
+    sigma_factor: 0.56          # sigma = sigma_factor * wavelength (~1-octave bandwidth)
+    gamma: 0.5                  # spatial aspect ratio of the Gabor envelope
+    psi: 0.0                    # phase offset (0 = even/cosine filter)
+    kernel_sigma_support: 3.0   # ksize = 2*ceil(kernel_sigma_support*sigma)+1
+    canonical_size: [96, 103]   # [w, h] every image is resized to before extraction
+
+  dinov2:
+    hub_repo: facebookresearch/dinov2
+    model: dinov2_vitb14
+    image_size: 224              # confirmed; 518 only as an optional headline run later
+    channels: replicate_gray
+    norm_mean: [0.485, 0.456, 0.406]
+    norm_std:  [0.229, 0.224, 0.225]
+    representation: cls_token
+    l2_normalize: true
+    device: cuda
+    fp16: true
+    batch_size: 64
+
+  sift:
+    nfeatures: 400              # cap keypoints to bound per-pair matching cost
+    contrast_threshold: 0.04
+    edge_threshold: 10
+    sigma: 1.6
+    matcher: flann             # flann | bf
+    lowe_ratio: 0.75
+    ransac: {method: RANSAC, reproj_thresh: 5.0, max_iters: 2000, seed: 42}
+    min_matches: 4             # < 4 -> homography impossible -> score 0
+    score: inliers
+
+  # nbis (minutiae) -- DROPPED 2026-06-27. SOCOFing's ~96x103 px is below the
+  # operating resolution of both NBIS/MINDTCT and deep MinutiaeNet; native
+  # extraction is degenerate (see docs/minutiae_investigation.md). The spike
+  # scripts (scripts/spike_nbis.py, scripts/spike_minutiaenet.py) and the
+  # min_minutiae_warn knob they read are retained for reproducibility.
+  nbis:
+    min_minutiae_warn: 10      # only consumed by the (retained) spike scripts
+
+# --------------------------------------------------------------------------
+# Checkpointing / resume (Kaggle 12h sessions are ephemeral).
+# --------------------------------------------------------------------------
+checkpointing:
+  enabled: true
+  per_experiment_dir: true     # results/raw/<experiment_id>/
+  ranks_csv: ranks.csv
+  verification_csv: verification_scores.csv
+  flush_every_probes: 50
+  resume: true                 # skip probe stems already present in ranks.csv
+  cache_representations: true
+
+runtime:
+  num_workers: 4               # Kaggle 4 vCPU
+  parallel_axis: probe         # each worker scores one probe vs the full gallery
