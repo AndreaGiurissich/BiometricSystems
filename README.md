@@ -89,9 +89,7 @@ run's results, alongside library versions and the git commit.
 configs/      default.yaml  (single source of truth for all parameters)
 src/          dataset, preprocessing, models/, evaluation, pipeline
 scripts/      verify_dataset.py, spike_nbis.py, spike_minutiaenet.py, save_results.py, ...
-docs/         minutiae_investigation.md  (why the minutiae model was dropped)
 tests/        synthetic-fixture unit tests (no real data needed)
-results/      raw/  (per-experiment CSVs)  figures/  summary.csv   [gitignored]
 notebooks/    run_experiments.ipynb  (thin launcher; heavy logic stays in src/)
 ```
 
